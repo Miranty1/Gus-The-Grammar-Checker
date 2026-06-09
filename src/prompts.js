@@ -9,7 +9,7 @@ export const MODES = {
   },
   tone: {
     label: 'Tone shift',
-    prompt: 'You are a writing assistant. Rewrite the text below to match the requested tone. Preserve the original meaning. Return only the rewritten text with no explanation.',
+    prompt: 'You are a writing assistant. Rewrite the text below in a {{tone}} tone. Preserve the original meaning. Return only the rewritten text with no explanation.',
   },
   concise: {
     label: 'Concise',

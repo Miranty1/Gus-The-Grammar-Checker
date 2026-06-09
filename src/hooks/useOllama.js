@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MODES } from '../prompts'
 
 const OLLAMA_URL = 'http://localhost:11434/api/generate'
 const MODEL = 'llama3.1:8b'
@@ -7,21 +8,34 @@ export function useOllama() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  async function generate(text, systemPrompt) {
+  async function generate(text, mode, tone = 'formal') {
     setLoading(true)
     setError(null)
+
+    const systemPrompt = MODES[mode].prompt.replace('{{tone}}', tone)
+
     try {
-      const res = await fetch(OLLAMA_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL,
-          system: systemPrompt,
-          prompt: text,
-          stream: false,
-        }),
-      })
-      if (!res.ok) throw new Error('Ollama request failed')
+      let res
+      try {
+        res = await fetch(OLLAMA_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: MODEL,
+            system: systemPrompt,
+            prompt: text,
+            stream: false,
+          }),
+        })
+      } catch {
+        throw new Error('Ollama is not running. Start it with: ollama serve')
+      }
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw new Error(`Ollama error ${res.status}: ${body || res.statusText}`)
+      }
+
       const data = await res.json()
       return data.response
     } catch (err) {
