@@ -31,9 +31,11 @@
     },
     "files": [
       "electron/**/*",
-      "dist/**/*"
+      "dist/**/*",
+      "assets/**/*"
     ],
     "mac": {
+      "icon": "assets/icon.png",
       "category": "public.app-category.productivity",
       "target": "dmg"
     },

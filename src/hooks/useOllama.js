@@ -28,7 +28,7 @@ export function useOllama() {
           }),
         })
       } catch {
-        throw new Error('Ollama is not running. Start it with: ollama serve')
+        throw new Error('Gus needs Ollama running — open Terminal and run: ollama serve')
       }
 
       if (!res.ok) {
