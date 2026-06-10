@@ -4,16 +4,27 @@ import { MODES } from '../prompts'
 const OLLAMA_URL = 'http://localhost:11434/api/generate'
 const MODEL = 'llama3.1:8b'
 
+// Strip common LLM preamble lines the model adds despite being told not to.
+// Matches lines like "Here is the corrected text:", "Here's the improved version:", etc.
+function stripPreamble(text) {
+  if (!text) return text
+  return text.replace(/^(here(?:'s| is)[^:\n]*:\s*\n+)/i, '').trim()
+}
+
 export function useOllama() {
   const [error, setError] = useState(null)
 
-  async function generate(text, mode, tone = 'formal', signal) {
+  async function generate(text, mode, tone = 'professional', signal, onChunk) {
     setError(null)
 
     const systemPrompt = MODES[mode].prompt.replace('{{tone}}', tone)
-    const fetchSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
-      : AbortSignal.timeout(30_000)
+    // Short timeout for the initial connection only — stream reads use the user abort signal
+    const connectSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000)
+
+    const inputWords = text.split(' ').length
+    const num_predict = Math.min(inputWords * 3, 600)
 
     try {
       let res
@@ -25,9 +36,10 @@ export function useOllama() {
             model: MODEL,
             system: systemPrompt,
             prompt: text,
-            stream: false,
+            stream: true,
+            num_predict,
           }),
-          signal: fetchSignal,
+          signal: connectSignal,
         })
       } catch (err) {
         if (err.name === 'TimeoutError') {
@@ -42,8 +54,42 @@ export function useOllama() {
         throw new Error(`Ollama error ${res.status}: ${body || res.statusText}`)
       }
 
-      const data = await res.json()
-      return data.response
+      // Reuse the same TextDecoder instance across all chunks so { stream: true }
+      // correctly handles multi-byte characters (em dashes, smart quotes) at chunk boundaries.
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let accumulated = ''
+      let lineBuffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (signal?.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
+        lineBuffer += decoder.decode(value, { stream: true })
+        const lines = lineBuffer.split('\n')
+        lineBuffer = lines.pop()
+        for (const line of lines) {
+          if (!line.trim()) continue
+          try {
+            const json = JSON.parse(line)
+            if (json.response) {
+              accumulated += json.response
+              onChunk?.(stripPreamble(accumulated))
+            }
+          } catch { /* skip malformed line */ }
+        }
+      }
+      // Flush any remaining buffered line (e.g. Ollama's final {"done":true} close marker)
+      if (lineBuffer.trim()) {
+        try {
+          const json = JSON.parse(lineBuffer)
+          if (json.response) {
+            accumulated += json.response
+            onChunk?.(stripPreamble(accumulated))
+          }
+        } catch { /* ignore */ }
+      }
+      return stripPreamble(accumulated)
     } catch (err) {
       if (err.name === 'AbortError') throw err
       setError(err.message)

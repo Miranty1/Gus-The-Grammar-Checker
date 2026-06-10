@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 
-export default function DiffView({ status, original, groupedOps, rejectedHunks, onToggleHunk, onDismiss, error, shortcut = '⌘ ⌥ G' }) {
+export default function DiffView({ status, original, groupedOps, rejectedHunks, onToggleHunk, onDismiss, error, shortcut = '⌘ ⌥ G', streamingText = '' }) {
   if (status === 'idle') {
     return (
       <div style={styles.centered}>
@@ -34,7 +34,9 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
       <div style={{ ...styles.section, flex: 1, minHeight: 0 }}>
         <div style={styles.sectionLabel}>suggested</div>
 
-        {status === 'loading' ? (
+        {status === 'loading' && streamingText ? (
+          <div style={styles.suggestedText}>{streamingText}</div>
+        ) : status === 'loading' ? (
           <div style={styles.dotsWrap}>
             <div style={styles.loadingDots}>
               <span style={{ ...styles.dot, animationDelay: '0ms' }} />
@@ -52,7 +54,18 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
               const rejected = rejectedHunks.has(item.id)
 
               if (rejected) {
-                if (item.removes.length === 0) return null
+                if (item.removes.length === 0) {
+                  return (
+                    <span
+                      key={item.id}
+                      onClick={() => onToggleHunk(item.id)}
+                      title="Click to re-add"
+                      style={styles.rejectedChip}
+                    >
+                      {item.adds.join('')}
+                    </span>
+                  )
+                }
                 return (
                   <span
                     key={item.id}

@@ -61,14 +61,12 @@ function getWindowPosition(windowWidth = 520) {
   return { x: clamped, y: workArea.y }
 }
 
-function createWindow(payload = null, openSettings = false) {
-  const { x, y } = getWindowPosition()
-
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 520,
     height: 494,
-    x,
-    y,
+    x: 0,
+    y: 0,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -87,18 +85,6 @@ function createWindow(payload = null, openSettings = false) {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
-    if (openSettings) {
-      mainWindow.webContents.send('open-settings')
-    } else if (payload) {
-      mainWindow.webContents.send('clipboard-text', payload)
-    }
-  })
-
-  mainWindow.on('closed', () => {
-    mainWindow = null
-  })
 }
 
 // ── Triggers ────────────────────────────────────────────────────────────────
@@ -112,21 +98,17 @@ function triggerGus() {
   const clipped = truncated ? text.slice(0, MAX_INPUT_LENGTH) : text
   console.log('[gus] clipboard:', clipped.slice(0, 120))
   const payload = { text: clipped, truncated }
-  if (mainWindow) {
-    mainWindow.focus()
-    mainWindow.webContents.send('clipboard-text', payload)
-  } else {
-    createWindow(payload)
-  }
+  const { x, y } = getWindowPosition()
+  mainWindow.setPosition(x, y)
+  mainWindow.show()
+  mainWindow.webContents.send('clipboard-text', payload)
 }
 
 function triggerSettings() {
-  if (mainWindow) {
-    mainWindow.focus()
-    mainWindow.webContents.send('open-settings')
-  } else {
-    createWindow('', true)
-  }
+  const { x, y } = getWindowPosition()
+  mainWindow.setPosition(x, y)
+  mainWindow.show()
+  mainWindow.webContents.send('open-settings')
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
@@ -148,12 +130,19 @@ app.whenReady().then(() => {
   )
   tray.on('click', triggerGus)
 
+  createWindow()
   globalShortcut.register(currentShortcut, triggerGus)
+
+  fetch('http://localhost:11434/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'llama3.1:8b', prompt: 'hi', stream: false, num_predict: 1 }),
+  }).catch(() => {})
 })
 
 // ── IPC handlers ────────────────────────────────────────────────────────────
 
-ipcMain.on('close-window', () => { if (mainWindow) mainWindow.close() })
+ipcMain.on('close-window', () => { if (mainWindow) mainWindow.hide() })
 ipcMain.on('write-clipboard', (_e, text) => { clipboard.writeText(text) })
 
 ipcMain.handle('load-settings', () => loadSettings())

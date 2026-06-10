@@ -22,6 +22,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [shortcut, setShortcut] = useState(null)
   const [truncated, setTruncated] = useState(false)
+  const [streamingText, setStreamingText] = useState('')
 
   const modeRef = useRef('grammar')
   const toneRef = useRef('formal')
@@ -50,13 +51,17 @@ export default function App() {
     setStatus('loading')
     setGroupedOps([])
     setRejectedHunks(new Set())
+    setStreamingText('')
 
     try {
-      const out = await generate(text, currentMode, currentTone, controller.signal)
+      const out = await generate(text, currentMode, currentTone, controller.signal, (partial) => {
+        if (controller.signal.aborted) return
+        setStreamingText(partial)
+      })
       if (controller.signal.aborted) return
+      setStreamingText('')
       if (out) {
-        const ops = computeDiff(text, out)
-        setGroupedOps(groupOps(ops))
+        setGroupedOps(groupOps(computeDiff(text, out)))
         setStatus('result')
       } else {
         setStatus('error')
@@ -74,7 +79,9 @@ export default function App() {
       setInputText(text)
       setTruncated(typeof payload === 'object' ? payload.truncated : false)
       setExiting(false)
+      setAppeared(false)
       setShowSettings(false)
+      requestAnimationFrame(() => requestAnimationFrame(() => setAppeared(true)))
       await runGenerate(text, modeRef.current, toneRef.current)
     })
     window.electronAPI.on('open-settings', () => {
@@ -230,6 +237,7 @@ export default function App() {
               onDismiss={handleDismiss}
               error={error}
               shortcut={shortcut ? acceleratorToSymbols(shortcut) : ''}
+              streamingText={streamingText}
             />
           </div>
 
