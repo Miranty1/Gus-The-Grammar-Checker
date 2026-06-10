@@ -7,12 +7,9 @@ const fs = require('fs')
 const ASSETS = path.join(__dirname, '../assets')
 
 const icons = [
-  { svg: 'icon.svg',       png: 'icon.png',            width: 512, height: 512 },
-  // macOS template images: Electron picks trayTemplate@2x.png on Retina automatically.
-  // Use the black (#1A1A1A) pencil — macOS reads only the alpha channel, renders
-  // white on dark menu bar and dark on light menu bar automatically.
-  { svg: 'tray-light.svg', png: 'trayTemplate.png',    width: 22,  height: 22  },
-  { svg: 'tray-light.svg', png: 'trayTemplate@2x.png', width: 44,  height: 44  },
+  { svg: 'icon.svg',  png: 'icon.png',            width: 512, height: 512 },
+  { svg: 'tray.svg',  png: 'trayTemplate.png',    width: 16,  height: 16  },
+  { svg: 'tray.svg',  png: 'trayTemplate@2x.png', width: 32,  height: 32  },
 ]
 
 ;(async () => {

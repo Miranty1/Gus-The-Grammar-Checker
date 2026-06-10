@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, clipboard, screen, Tray, nativeImage, nativeTheme, Menu, ipcMain } = require('electron')
+const { app, BrowserWindow, globalShortcut, clipboard, screen, Tray, nativeImage, Menu, ipcMain } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -27,7 +27,29 @@ function saveSettings(data) {
   fs.writeFileSync(configPath(), JSON.stringify(data, null, 2))
 }
 
-let currentShortcut = loadSettings().shortcut
+// ── Usage persistence ───────────────────────────────────────────────────────
+
+function usagePath() {
+  return path.join(app.getPath('userData'), 'usage.json')
+}
+
+function loadUsage() {
+  try {
+    return JSON.parse(fs.readFileSync(usagePath(), 'utf8'))
+  } catch {
+    return {}
+  }
+}
+
+function recordUsage(mode) {
+  const today = new Date().toISOString().slice(0, 10)
+  const data = loadUsage()
+  if (!data[today]) data[today] = {}
+  data[today][mode] = (data[today][mode] || 0) + 1
+  fs.writeFileSync(usagePath(), JSON.stringify(data, null, 2))
+}
+
+let currentShortcut = 'CommandOrControl+Alt+G'
 
 // ── Window helpers ──────────────────────────────────────────────────────────
 
@@ -36,23 +58,22 @@ function getWindowPosition(windowWidth = 520) {
   const { workArea } = screen.getDisplayNearestPoint({ x, y })
   const xPos = Math.round(x - windowWidth / 2 + width / 2)
   const clamped = Math.max(workArea.x, Math.min(xPos, workArea.x + workArea.width - windowWidth))
-  return { x: clamped, y: Math.round(y + height) }
+  return { x: clamped, y: workArea.y }
 }
 
-function createWindow(text = '', openSettings = false) {
+function createWindow(payload = null, openSettings = false) {
   const { x, y } = getWindowPosition()
 
   mainWindow = new BrowserWindow({
     width: 520,
-    height: 480,
+    height: 494,
     x,
     y,
     frame: false,
-    transparent: false,
+    transparent: true,
     alwaysOnTop: true,
     resizable: false,
     show: false,
-    backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -70,8 +91,8 @@ function createWindow(text = '', openSettings = false) {
     mainWindow.show()
     if (openSettings) {
       mainWindow.webContents.send('open-settings')
-    } else if (text) {
-      mainWindow.webContents.send('clipboard-text', text)
+    } else if (payload) {
+      mainWindow.webContents.send('clipboard-text', payload)
     }
   })
 
@@ -82,14 +103,20 @@ function createWindow(text = '', openSettings = false) {
 
 // ── Triggers ────────────────────────────────────────────────────────────────
 
+const MAX_INPUT_LENGTH = 5000
+
 function triggerGus() {
   const text = clipboard.readText().trim()
-  console.log('[gus] clipboard:', text.slice(0, 120))
+  if (!text) return
+  const truncated = text.length > MAX_INPUT_LENGTH
+  const clipped = truncated ? text.slice(0, MAX_INPUT_LENGTH) : text
+  console.log('[gus] clipboard:', clipped.slice(0, 120))
+  const payload = { text: clipped, truncated }
   if (mainWindow) {
     mainWindow.focus()
-    mainWindow.webContents.send('clipboard-text', text)
+    mainWindow.webContents.send('clipboard-text', payload)
   } else {
-    createWindow(text)
+    createWindow(payload)
   }
 }
 
@@ -104,19 +131,12 @@ function triggerSettings() {
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
 
-function loadTrayIcon(dark) {
-  const name = dark ? 'tray-dark' : 'tray-light'
-  // Electron auto-picks tray-dark@2x.png / tray-light@2x.png on Retina displays
-  return nativeImage.createFromPath(path.join(__dirname, '../assets', `${name}.png`))
-}
-
-function updateTrayIcon() {
-  tray.setImage(loadTrayIcon(nativeTheme.shouldUseDarkColors))
-}
-
 app.whenReady().then(() => {
-  tray = new Tray(loadTrayIcon(nativeTheme.shouldUseDarkColors))
-  nativeTheme.on('updated', updateTrayIcon)
+  currentShortcut = loadSettings().shortcut
+
+  const trayIcon = nativeImage.createFromPath(path.join(__dirname, '../assets/trayTemplate.png'))
+  trayIcon.setTemplateImage(true)
+  tray = new Tray(trayIcon)
   tray.setToolTip('Gus — Grammar Checker')
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -138,24 +158,24 @@ ipcMain.on('write-clipboard', (_e, text) => { clipboard.writeText(text) })
 
 ipcMain.handle('load-settings', () => loadSettings())
 
+ipcMain.on('record-usage', (_, mode) => recordUsage(mode))
+ipcMain.handle('load-usage', () => loadUsage())
+
 ipcMain.handle('save-shortcut', (_, newShortcut) => {
-  globalShortcut.unregister(currentShortcut)
   const ok = globalShortcut.register(newShortcut, triggerGus)
   if (ok) {
+    globalShortcut.unregister(currentShortcut)
     currentShortcut = newShortcut
     saveSettings({ shortcut: newShortcut })
     return { ok: true }
   }
-  globalShortcut.register(currentShortcut, triggerGus)
   return { ok: false, error: 'Shortcut could not be registered — it may be in use by another app.' }
 })
 
+// Without this handler, Electron's default is to quit when all windows close — even on macOS.
+// Subscribe and do nothing on macOS so the tray app keeps running after the popup is dismissed.
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
-})
-
-app.on('activate', () => {
-  if (mainWindow === null) createWindow()
 })
 
 app.on('will-quit', () => {

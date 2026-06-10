@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import ModePills from './components/ModePills'
 import DiffView from './components/DiffView'
 import ActionBar from './components/ActionBar'
+import Dashboard from './Dashboard'
 import { useOllama } from './hooks/useOllama'
 import { computeDiff, groupOps, buildResult } from './utils/diff'
 
@@ -17,36 +18,61 @@ export default function App() {
   const [groupedOps, setGroupedOps] = useState([])
   const [rejectedHunks, setRejectedHunks] = useState(new Set())
   const [exiting, setExiting] = useState(false)
+  const [appeared, setAppeared] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [shortcut, setShortcut] = useState(null)
+  const [truncated, setTruncated] = useState(false)
 
   const modeRef = useRef('grammar')
   const toneRef = useRef('formal')
   const inputRef = useRef('')
   const handleAcceptRef = useRef(null)
+  const abortRef = useRef(null)
 
   const { generate, error } = useOllama()
 
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { toneRef.current = tone }, [tone])
 
+  useEffect(() => {
+    window.electronAPI.invoke('load-settings').then(s => {
+      if (s?.shortcut) setShortcut(s.shortcut)
+    })
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setAppeared(true)))
+    return () => cancelAnimationFrame(id)
+  }, [])
+
   async function runGenerate(text, currentMode, currentTone) {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
     setStatus('loading')
     setGroupedOps([])
     setRejectedHunks(new Set())
-    const out = await generate(text, currentMode, currentTone)
-    if (out) {
-      const ops = computeDiff(text, out)
-      setGroupedOps(groupOps(ops))
-      setStatus('result')
-    } else {
+
+    try {
+      const out = await generate(text, currentMode, currentTone, controller.signal)
+      if (controller.signal.aborted) return
+      if (out) {
+        const ops = computeDiff(text, out)
+        setGroupedOps(groupOps(ops))
+        setStatus('result')
+      } else {
+        setStatus('error')
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return
       setStatus('error')
     }
   }
 
   useEffect(() => {
-    window.electronAPI.on('clipboard-text', async (text) => {
+    window.electronAPI.on('clipboard-text', async (payload) => {
+      const text = typeof payload === 'string' ? payload : payload.text
       inputRef.current = text
       setInputText(text)
+      setTruncated(typeof payload === 'object' ? payload.truncated : false)
       setExiting(false)
       setShowSettings(false)
       await runGenerate(text, modeRef.current, toneRef.current)
@@ -85,6 +111,7 @@ export default function App() {
   // Mouse-triggered accept: plays exit animation
   function handleAccept() {
     if (status !== 'result') return
+    window.electronAPI.send('record-usage', mode)
     const effective = buildResult(groupedOps, rejectedHunks)
     window.electronAPI.send('write-clipboard', effective)
     if (prefersReducedMotion()) {
@@ -98,6 +125,7 @@ export default function App() {
   // Keyboard Enter: immediate close, no animation
   function handleAcceptImmediate() {
     if (status !== 'result') return
+    window.electronAPI.send('record-usage', mode)
     const effective = buildResult(groupedOps, rejectedHunks)
     window.electronAPI.send('write-clipboard', effective)
     window.electronAPI.send('close-window')
@@ -127,7 +155,7 @@ export default function App() {
     <>
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { overflow: hidden; background: #ffffff; }
+        body { overflow: hidden; background: transparent; }
         button:active { transform: scale(0.97) !important; }
         @keyframes pulse {
           0%, 100% { opacity: 0.3; transform: scale(0.8); }
@@ -136,207 +164,128 @@ export default function App() {
         @media (prefers-reduced-motion: reduce) {
           @keyframes pulse { 0%, 100% { opacity: 0.6; } }
         }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
       `}</style>
 
       <div style={{
-        ...styles.panel,
-        opacity: exiting ? 0 : 1,
-        transform: exiting ? 'scale(0.97)' : 'scale(1)',
+        position: 'relative',
+        width: '100vw',
+        height: '100vh',
+        opacity: exiting ? 0 : appeared ? 1 : 0,
+        transform: exiting
+          ? 'scale(0.97)'
+          : (appeared || prefersReducedMotion()) ? 'scale(1) translateY(0px)' : 'scale(0.96) translateY(-5px)',
         transition: exiting
           ? 'opacity 100ms cubic-bezier(0.23,1,0.32,1), transform 100ms cubic-bezier(0.23,1,0.32,1)'
+          : appeared
+          ? 'opacity 180ms cubic-bezier(0.23,1,0.32,1), transform 180ms cubic-bezier(0.23,1,0.32,1)'
           : 'none',
+        filter: 'drop-shadow(0 6px 20px rgba(0,0,0,0.13))',
       }}>
-        {/* Header */}
-        <div style={styles.header}>
-          <div style={styles.headerLeft}>
-            <div style={styles.logoMark}>G</div>
-            <div>
-              <div style={styles.appName}>Gus</div>
-              <div style={styles.appSub}>The grammar checker</div>
+        {/* CSS nib triangle */}
+        <div style={styles.nib} />
+
+        {/* Frosted glass panel */}
+        <div style={styles.panel}>
+          {/* Header */}
+          <div style={styles.header}>
+            <div style={styles.headerLeft}>
+              <div style={styles.logoMark}>G</div>
+              <div>
+                <div style={styles.appName}>Gus</div>
+                <div style={styles.appSub}>The grammar checker</div>
+              </div>
             </div>
+            {shortcut && <div style={styles.shortcutPill}>{acceleratorToSymbols(shortcut)}</div>}
           </div>
-          <div style={styles.shortcutPill}>⌘ ⌥ G</div>
-        </div>
 
-        {/* Mode pills */}
-        <div style={styles.pillsWrap}>
-          <ModePills
-            activeMode={mode}
-            onModeChange={handleModeChange}
-            activeTone={tone}
-            onToneChange={handleToneChange}
-          />
-        </div>
+          {/* Mode pills */}
+          <div style={styles.pillsWrap}>
+            <ModePills
+              activeMode={mode}
+              onModeChange={handleModeChange}
+              activeTone={tone}
+              onToneChange={handleToneChange}
+            />
+          </div>
 
-        {/* Diff content */}
-        <div style={styles.content}>
-          <DiffView
-            status={status}
-            original={inputText}
-            groupedOps={groupedOps}
-            rejectedHunks={rejectedHunks}
-            onToggleHunk={handleToggleHunk}
+          {/* Truncation notice */}
+          {truncated && (
+            <div style={styles.truncatedNotice}>
+              Text clipped to 5,000 characters
+            </div>
+          )}
+
+          {/* Diff content */}
+          <div style={styles.content}>
+            <DiffView
+              status={status}
+              original={inputText}
+              groupedOps={groupedOps}
+              rejectedHunks={rejectedHunks}
+              onToggleHunk={handleToggleHunk}
+              onDismiss={handleDismiss}
+              error={error}
+              shortcut={shortcut ? acceleratorToSymbols(shortcut) : ''}
+            />
+          </div>
+
+          <ActionBar
+            onAccept={handleAccept}
             onDismiss={handleDismiss}
-            error={error}
+            disabled={status !== 'result'}
           />
+
+          {/* Settings / dashboard overlay */}
+          {showSettings && (
+            <Dashboard
+              onClose={() => setShowSettings(false)}
+              onShortcutSaved={setShortcut}
+            />
+          )}
         </div>
-
-        <ActionBar
-          onAccept={handleAccept}
-          onDismiss={handleDismiss}
-          disabled={status !== 'result'}
-        />
-
-        {/* Settings overlay */}
-        {showSettings && (
-          <SettingsOverlay onClose={() => setShowSettings(false)} />
-        )}
       </div>
     </>
   )
 }
 
-function eventToAccelerator(e) {
-  const parts = []
-  if (e.metaKey || e.ctrlKey) parts.push('CommandOrControl')
-  if (e.altKey)   parts.push('Alt')
-  if (e.shiftKey) parts.push('Shift')
-  let key = e.key
-  if (key.startsWith('Arrow')) key = key.slice(5)
-  if (key === ' ') key = 'Space'
-  if (key === 'Enter') key = 'Return'
-  if (key.length === 1) key = key.toUpperCase()
-  parts.push(key)
-  return parts.join('+')
+const ACCELERATOR_SYMBOLS = {
+  CommandOrControl: '⌘', Command: '⌘', Control: '⌃', Ctrl: '⌃',
+  Alt: '⌥', Option: '⌥', Shift: '⇧', Super: '⊞',
 }
 
-function SettingsOverlay({ onClose }) {
-  const [shortcutInput, setShortcutInput] = useState('')
-  const [saveError, setSaveError] = useState(null)
-  const [saving, setSaving] = useState(false)
-  const [recording, setRecording] = useState(false)
-
-  useEffect(() => {
-    window.electronAPI.invoke('load-settings').then(s => {
-      setShortcutInput(s.shortcut)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!recording) return
-    function onKey(e) {
-      e.preventDefault()
-      e.stopPropagation()
-      if (['Meta', 'Control', 'Alt', 'Shift', 'OS'].includes(e.key)) return
-      if (e.key === 'Escape') { setRecording(false); return }
-      if (!e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) return
-      setShortcutInput(eventToAccelerator(e))
-      setSaveError(null)
-      setRecording(false)
-    }
-    document.addEventListener('keydown', onKey, true)
-    return () => document.removeEventListener('keydown', onKey, true)
-  }, [recording])
-
-  async function handleSave() {
-    if (!shortcutInput.trim()) return
-    setSaving(true)
-    setSaveError(null)
-    const res = await window.electronAPI.invoke('save-shortcut', shortcutInput.trim())
-    setSaving(false)
-    if (res.ok) {
-      onClose()
-    } else {
-      setSaveError(res.error)
-    }
-  }
-
-  return (
-    <div style={settingsStyles.overlay}>
-      <button
-        onClick={onClose}
-        style={settingsStyles.backBtn}
-        onMouseEnter={e => e.currentTarget.style.color = '#111'}
-        onMouseLeave={e => e.currentTarget.style.color = '#888'}
-      >
-        ← Back
-      </button>
-
-      <div style={settingsStyles.body}>
-        <h2 style={settingsStyles.heading}>Settings</h2>
-
-        <label style={settingsStyles.label}>Global shortcut</label>
-
-        {recording ? (
-          <>
-            <div style={settingsStyles.captureBox}>
-              Press shortcut…
-            </div>
-            <p style={settingsStyles.hint}>Esc to cancel</p>
-          </>
-        ) : (
-          <>
-            <div style={settingsStyles.inputRow}>
-              <input
-                style={settingsStyles.input}
-                value={shortcutInput}
-                onChange={e => { setShortcutInput(e.target.value); setSaveError(null) }}
-                onKeyDown={e => { if (e.key === 'Enter') handleSave() }}
-                spellCheck={false}
-                placeholder="CommandOrControl+Alt+G"
-              />
-              <button
-                onClick={() => setRecording(true)}
-                style={settingsStyles.recordBtn}
-                onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
-                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-              >
-                Record
-              </button>
-            </div>
-            <p style={settingsStyles.hint}>
-              Or type in Electron accelerator format, e.g. <code style={settingsStyles.inlineCode}>CommandOrControl+Shift+G</code>
-            </p>
-          </>
-        )}
-
-        {saveError && <p style={settingsStyles.errorText}>{saveError}</p>}
-      </div>
-
-      <div style={settingsStyles.footer}>
-        <button
-          onClick={onClose}
-          style={settingsStyles.cancelBtn}
-          onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          style={{ ...settingsStyles.saveBtn, ...(saving ? settingsStyles.saveBtnDisabled : {}) }}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    </div>
-  )
+function acceleratorToSymbols(accelerator) {
+  return accelerator.split('+').map(p => ACCELERATOR_SYMBOLS[p] ?? p.toUpperCase()).join(' ')
 }
 
 const styles = {
+  nib: {
+    position: 'absolute',
+    top: 0,
+    left: 'calc(50% - 11px)',
+    width: 0,
+    height: 0,
+    borderLeft: '11px solid transparent',
+    borderRight: '11px solid transparent',
+    borderBottom: '12px solid #fff',
+    zIndex: 2,
+  },
   panel: {
-    width: '100vw',
-    height: '100vh',
+    position: 'absolute',
+    top: 12,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: 14,
     background: '#fff',
-    borderRadius: 16,
-    boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
     display: 'flex',
     flexDirection: 'column',
     padding: '18px 20px 16px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     overflow: 'hidden',
-    position: 'relative',
   },
   header: {
     display: 'flex',
@@ -381,10 +330,18 @@ const styles = {
     borderRadius: 20,
     padding: '3px 9px',
     fontFamily: '-apple-system, sans-serif',
-    letterSpacing: '0.02em',
   },
   pillsWrap: {
     marginBottom: 14,
+  },
+  truncatedNotice: {
+    fontSize: 11,
+    color: '#a0522d',
+    background: '#fff8f0',
+    border: '1px solid #f5d9b8',
+    borderRadius: 6,
+    padding: '4px 10px',
+    marginBottom: 8,
   },
   content: {
     flex: 1,
@@ -396,130 +353,3 @@ const styles = {
   },
 }
 
-const btnBase = {
-  border: 'none',
-  borderRadius: 8,
-  padding: '7px 16px',
-  fontSize: 13,
-  fontWeight: 500,
-  cursor: 'pointer',
-  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  transition: 'background 120ms cubic-bezier(0.23,1,0.32,1)',
-}
-
-const settingsStyles = {
-  overlay: {
-    position: 'absolute',
-    inset: 0,
-    background: '#fff',
-    borderRadius: 16,
-    display: 'flex',
-    flexDirection: 'column',
-    padding: '14px 20px 16px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  },
-  backBtn: {
-    ...btnBase,
-    background: 'transparent',
-    color: '#888',
-    padding: '4px 0',
-    alignSelf: 'flex-start',
-    fontSize: 13,
-    transition: 'color 120ms ease',
-  },
-  body: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    paddingTop: 16,
-  },
-  heading: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#111',
-    marginBottom: 8,
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: 500,
-    color: '#888',
-    letterSpacing: '0.03em',
-    textTransform: 'uppercase',
-  },
-  inputRow: {
-    display: 'flex',
-    gap: 8,
-    alignItems: 'center',
-  },
-  input: {
-    flex: 1,
-    padding: '8px 10px',
-    fontSize: 13,
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-    color: '#111',
-    background: '#f8f8f8',
-    border: '1px solid #e8e8e8',
-    borderRadius: 8,
-    outline: 'none',
-  },
-  captureBox: {
-    width: '100%',
-    padding: '8px 10px',
-    fontSize: 13,
-    fontStyle: 'italic',
-    color: '#aaa',
-    background: '#f0f6ff',
-    border: '1.5px solid #0C447C',
-    borderRadius: 8,
-    userSelect: 'none',
-  },
-  recordBtn: {
-    ...btnBase,
-    background: 'transparent',
-    color: '#555',
-    padding: '7px 12px',
-    flexShrink: 0,
-    border: '1px solid #e8e8e8',
-  },
-  hint: {
-    fontSize: 11,
-    color: '#aaa',
-    lineHeight: 1.5,
-  },
-  inlineCode: {
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-    fontSize: 11,
-    color: '#555',
-    background: '#f0f0f0',
-    padding: '1px 4px',
-    borderRadius: 3,
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#b91c1c',
-    lineHeight: 1.4,
-    marginTop: 4,
-  },
-  footer: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    gap: 8,
-    paddingTop: 12,
-    borderTop: '1px solid #f0f0f0',
-  },
-  cancelBtn: {
-    ...btnBase,
-    background: 'transparent',
-    color: '#666',
-  },
-  saveBtn: {
-    ...btnBase,
-    background: '#0C447C',
-    color: '#fff',
-  },
-  saveBtnDisabled: {
-    background: '#ccc',
-    cursor: 'not-allowed',
-  },
-}

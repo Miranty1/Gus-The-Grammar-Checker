@@ -5,14 +5,15 @@ const OLLAMA_URL = 'http://localhost:11434/api/generate'
 const MODEL = 'llama3.1:8b'
 
 export function useOllama() {
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
-  async function generate(text, mode, tone = 'formal') {
-    setLoading(true)
+  async function generate(text, mode, tone = 'formal', signal) {
     setError(null)
 
     const systemPrompt = MODES[mode].prompt.replace('{{tone}}', tone)
+    const fetchSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000)
 
     try {
       let res
@@ -26,8 +27,13 @@ export function useOllama() {
             prompt: text,
             stream: false,
           }),
+          signal: fetchSignal,
         })
-      } catch {
+      } catch (err) {
+        if (err.name === 'TimeoutError') {
+          throw new Error('Ollama took too long to respond — check that it\'s still running.')
+        }
+        if (err.name === 'AbortError') throw err
         throw new Error('Gus needs Ollama running — open Terminal and run: ollama serve')
       }
 
@@ -39,12 +45,11 @@ export function useOllama() {
       const data = await res.json()
       return data.response
     } catch (err) {
+      if (err.name === 'AbortError') throw err
       setError(err.message)
       return null
-    } finally {
-      setLoading(false)
     }
   }
 
-  return { generate, loading, error }
+  return { generate, error }
 }

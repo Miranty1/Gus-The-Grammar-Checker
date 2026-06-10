@@ -1,10 +1,10 @@
 import React, { useState } from 'react'
 
-export default function DiffView({ status, original, groupedOps, rejectedHunks, onToggleHunk, onDismiss, error }) {
+export default function DiffView({ status, original, groupedOps, rejectedHunks, onToggleHunk, onDismiss, error, shortcut = '⌘ ⌥ G' }) {
   if (status === 'idle') {
     return (
       <div style={styles.centered}>
-        <p style={styles.muted}>Copy some text, then press <kbd style={styles.kbd}>⌘ ⌥ G</kbd></p>
+        <p style={styles.muted}>Copy some text, then press <kbd style={styles.kbd}>{shortcut}</kbd></p>
       </div>
     )
   }
@@ -25,14 +25,14 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
   return (
     <div style={styles.splitWrap}>
       <div style={styles.section}>
-        <div style={styles.sectionLabel}>ORIGINAL</div>
+        <div style={styles.sectionLabel}>original</div>
         <div style={styles.originalText}>{original}</div>
       </div>
 
       <div style={styles.divider} />
 
       <div style={{ ...styles.section, flex: 1, minHeight: 0 }}>
-        <div style={styles.sectionLabel}>SUGGESTED</div>
+        <div style={styles.sectionLabel}>suggested</div>
 
         {status === 'loading' ? (
           <div style={styles.dotsWrap}>
@@ -216,11 +216,9 @@ const styles = {
   },
   sectionLabel: {
     fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: '0.08em',
-    color: '#999',
-    marginBottom: 6,
-    textTransform: 'uppercase',
+    fontWeight: 500,
+    color: '#aaa',
+    marginBottom: 5,
   },
   originalText: {
     fontSize: 13,
