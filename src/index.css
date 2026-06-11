@@ -1,0 +1,28 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { overflow: hidden; background: transparent; }
+button:active { transform: scale(0.97) !important; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50%       { opacity: 1;   transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  @keyframes pulse { 0%, 100% { opacity: 0.6; } }
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
+
+/* Tone sub-pills slide-in */
+.tone-pills {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 220ms ease, opacity 150ms ease;
+}
+.tone-pills.visible {
+  max-height: 90px;
+  opacity: 1;
+}

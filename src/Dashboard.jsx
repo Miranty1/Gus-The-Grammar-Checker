@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import OllamaStatus from './dashboard/OllamaStatus'
 import UsageStats from './dashboard/UsageStats'
 import { btnBase } from './styles/base'
+import { eventToAccelerator } from './utils/accelerator'
 
 const NAV_ITEMS = [
   { id: 'ollama', label: 'Ollama Status' },
@@ -11,6 +12,8 @@ const NAV_ITEMS = [
 
 export default function Dashboard({ onClose, onShortcutSaved }) {
   const [activeSection, setActiveSection] = useState('ollama')
+  const [hoveredNav, setHoveredNav] = useState(null)
+  const [backHovered, setBackHovered] = useState(false)
 
   return (
     <div style={styles.overlay}>
@@ -18,9 +21,9 @@ export default function Dashboard({ onClose, onShortcutSaved }) {
       <div style={styles.topBar}>
         <button
           onClick={onClose}
-          style={styles.backBtn}
-          onMouseEnter={e => e.currentTarget.style.color = '#111'}
-          onMouseLeave={e => e.currentTarget.style.color = '#888'}
+          style={{ ...styles.backBtn, color: backHovered ? '#111' : '#888' }}
+          onMouseEnter={() => setBackHovered(true)}
+          onMouseLeave={() => setBackHovered(false)}
         >
           ← Back
         </button>
@@ -30,24 +33,25 @@ export default function Dashboard({ onClose, onShortcutSaved }) {
       {/* Body: sidebar + content */}
       <div style={styles.body}>
         <nav style={styles.sidebar}>
-          {NAV_ITEMS.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveSection(item.id)}
-              style={{
-                ...styles.navItem,
-                ...(activeSection === item.id ? styles.navItemActive : {}),
-              }}
-              onMouseEnter={e => {
-                if (activeSection !== item.id) e.currentTarget.style.background = '#f5f5f5'
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = activeSection === item.id ? '#E6F1FB' : 'transparent'
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
+          {NAV_ITEMS.map(item => {
+            const isActive = activeSection === item.id
+            const isHovered = hoveredNav === item.id
+            return (
+              <button
+                key={item.id}
+                onClick={() => setActiveSection(item.id)}
+                style={{
+                  ...styles.navItem,
+                  ...(isActive ? styles.navItemActive : {}),
+                  ...(!isActive && isHovered ? { background: '#f5f5f5' } : {}),
+                }}
+                onMouseEnter={() => setHoveredNav(item.id)}
+                onMouseLeave={() => setHoveredNav(null)}
+              >
+                {item.label}
+              </button>
+            )
+          })}
         </nav>
 
         <div style={styles.divider} />
@@ -67,11 +71,13 @@ function ShortcutSection({ onClose, onShortcutSaved }) {
   const [saveError, setSaveError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [recording, setRecording] = useState(false)
+  const [recordHovered, setRecordHovered] = useState(false)
+  const [cancelHovered, setCancelHovered] = useState(false)
 
   useEffect(() => {
-    window.electronAPI.invoke('load-settings').then(s => {
-      setShortcutInput(s.shortcut)
-    })
+    window.electronAPI.invoke('load-settings')
+      .then(s => setShortcutInput(s?.shortcut ?? ''))
+      .catch(() => setShortcutInput('CommandOrControl+Alt+G'))
   }, [])
 
   useEffect(() => {
@@ -126,9 +132,9 @@ function ShortcutSection({ onClose, onShortcutSaved }) {
             />
             <button
               onClick={() => setRecording(true)}
-              style={shortcutStyles.recordBtn}
-              onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              style={{ ...shortcutStyles.recordBtn, background: recordHovered ? '#f5f5f5' : 'transparent' }}
+              onMouseEnter={() => setRecordHovered(true)}
+              onMouseLeave={() => setRecordHovered(false)}
             >
               Record
             </button>
@@ -145,9 +151,9 @@ function ShortcutSection({ onClose, onShortcutSaved }) {
       <div style={shortcutStyles.footer}>
         <button
           onClick={onClose}
-          style={shortcutStyles.cancelBtn}
-          onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
-          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          style={{ ...shortcutStyles.cancelBtn, background: cancelHovered ? '#f5f5f5' : 'transparent' }}
+          onMouseEnter={() => setCancelHovered(true)}
+          onMouseLeave={() => setCancelHovered(false)}
         >
           Cancel
         </button>
@@ -161,20 +167,6 @@ function ShortcutSection({ onClose, onShortcutSaved }) {
       </div>
     </div>
   )
-}
-
-function eventToAccelerator(e) {
-  const parts = []
-  if (e.metaKey || e.ctrlKey) parts.push('CommandOrControl')
-  if (e.altKey)   parts.push('Alt')
-  if (e.shiftKey) parts.push('Shift')
-  let key = e.key
-  if (key.startsWith('Arrow')) key = key.slice(5)
-  if (key === ' ') key = 'Space'
-  if (key === 'Enter') key = 'Return'
-  if (key.length === 1) key = key.toUpperCase()
-  parts.push(key)
-  return parts.join('+')
 }
 
 const styles = {

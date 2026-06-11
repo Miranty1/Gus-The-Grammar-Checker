@@ -3,3 +3,9 @@ dist/
 release/
 .DS_Store
 *.log
+gus-handoff.md
+gus-handoff-*.md
+CODE_REVIEW_REPORT.md
+CODE_REVIEW_REPORT-*.md
+.claude/
+.claude-*/

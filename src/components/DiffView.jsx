@@ -14,8 +14,11 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
       <div style={styles.centered}>
         <div style={styles.errorCard}>
           <p style={styles.errorHeading}>Gus needs Ollama running</p>
-          <p style={styles.errorBody}>Open Terminal and run:</p>
-          <code style={styles.codeBlock}>ollama serve</code>
+          {error
+            ? <p style={styles.errorBody}>{error}</p>
+            : <p style={styles.errorBody}>Open Terminal and run:</p>
+          }
+          {!error && <code style={styles.codeBlock}>ollama serve</code>}
           <DismissButton onClick={onDismiss} />
         </div>
       </div>
@@ -46,9 +49,9 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
           </div>
         ) : (
           <div style={styles.suggestedText}>
-            {groupedOps.map((item, idx) => {
+            {(groupedOps ?? []).map((item, idx) => {
               if (item.type === 'equal') {
-                return <span key={idx}>{item.text}</span>
+                return <span key={`eq-${idx}`}>{item.text}</span>
               }
 
               const rejected = rejectedHunks.has(item.id)

@@ -4,11 +4,13 @@ import { MODES } from '../prompts'
 const OLLAMA_URL = 'http://localhost:11434/api/generate'
 const MODEL = 'llama3.1:8b'
 
-// Strip common LLM preamble lines the model adds despite being told not to.
-// Matches lines like "Here is the corrected text:", "Here's the improved version:", etc.
+// Strip common LLM preamble lines. Covers "Here is…", "Sure! Here's…",
+// "Corrected text:", "Of course!", and similar opener patterns.
 function stripPreamble(text) {
   if (!text) return text
-  return text.replace(/^(here(?:'s| is)[^:\n]*:\s*\n+)/i, '').trim()
+  return text
+    .replace(/^(?:(?:sure|of course|certainly|absolutely)[!,]?\s+)?(?:here(?:'s| is)[^:\n]*:\s*\n+|corrected[^:\n]*:\s*\n+)/i, '')
+    .trim()
 }
 
 export function useOllama() {
@@ -23,7 +25,7 @@ export function useOllama() {
       ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000)
 
-    const inputWords = text.split(' ').length
+    const inputWords = text.trim().split(/\s+/).filter(Boolean).length
     const num_predict = Math.min(inputWords * 3, 600)
 
     try {
@@ -60,11 +62,12 @@ export function useOllama() {
       const decoder = new TextDecoder()
       let accumulated = ''
       let lineBuffer = ''
+      let preambleStripped = false
 
       while (true) {
+        if (signal?.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
         const { done, value } = await reader.read()
         if (done) break
-        if (signal?.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
         lineBuffer += decoder.decode(value, { stream: true })
         const lines = lineBuffer.split('\n')
         lineBuffer = lines.pop()
@@ -74,7 +77,13 @@ export function useOllama() {
             const json = JSON.parse(line)
             if (json.response) {
               accumulated += json.response
-              onChunk?.(stripPreamble(accumulated))
+              // Short-circuit: only apply regex until preamble has been stripped once
+              let display = accumulated
+              if (!preambleStripped) {
+                display = stripPreamble(accumulated)
+                if (display !== accumulated) preambleStripped = true
+              }
+              onChunk?.(display)
             }
           } catch { /* skip malformed line */ }
         }
@@ -85,7 +94,7 @@ export function useOllama() {
           const json = JSON.parse(lineBuffer)
           if (json.response) {
             accumulated += json.response
-            onChunk?.(stripPreamble(accumulated))
+            onChunk?.(preambleStripped ? accumulated : stripPreamble(accumulated))
           }
         } catch { /* ignore */ }
       }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { btnBase } from '../styles/base'
 
 const TAGS_URL = 'http://localhost:11434/api/tags'
@@ -6,26 +6,39 @@ const TAGS_URL = 'http://localhost:11434/api/tags'
 export default function OllamaStatus() {
   const [status, setStatus] = useState('checking')
   const [model, setModel] = useState(null)
+  const [modelCount, setModelCount] = useState(0)
   const [checking, setChecking] = useState(false)
+  const abortRef = useRef(null)
 
   async function check() {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     setChecking(true)
     setStatus('checking')
     try {
-      const res = await fetch(TAGS_URL, { signal: AbortSignal.timeout(5000) })
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(5000)])
+      const res = await fetch(TAGS_URL, { signal })
       if (!res.ok) throw new Error('bad status')
       const { models } = await res.json()
+      if (controller.signal.aborted) return
       setStatus('online')
       setModel(models?.[0]?.name ?? null)
+      setModelCount(models?.length ?? 0)
     } catch {
+      if (controller.signal.aborted) return
       setStatus('offline')
       setModel(null)
+      setModelCount(0)
     } finally {
-      setChecking(false)
+      if (!controller.signal.aborted) setChecking(false)
     }
   }
 
-  useEffect(() => { check() }, [])
+  useEffect(() => {
+    check()
+    return () => abortRef.current?.abort()
+  }, [])
 
   const dotColor =
     status === 'online'   ? '#16a34a' :
@@ -48,6 +61,9 @@ export default function OllamaStatus() {
           <div style={styles.modelRow}>
             <span style={styles.metaLabel}>Model</span>
             <span style={styles.modelName}>{model ?? '—'}</span>
+            {modelCount > 1 && (
+              <span style={styles.modelBadge}>+{modelCount - 1} more</span>
+            )}
           </div>
         )}
 
@@ -118,6 +134,15 @@ const styles = {
     fontSize: 12,
     color: '#333',
     fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
+  },
+  modelBadge: {
+    fontSize: 10,
+    color: '#888',
+    background: '#f0f0f0',
+    border: '1px solid #e0e0e0',
+    borderRadius: 10,
+    padding: '1px 6px',
+    marginLeft: 4,
   },
   testBtn: {
     background: 'transparent',

@@ -44,20 +44,26 @@ function Pill({ label, active, colors, onClick }) {
 export default function ModePills({ activeMode, onModeChange, activeTone, onToneChange }) {
   return (
     <div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <p style={styles.rowLabel}>Mode</p>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         {Object.entries(MODES).map(([key, { label }]) => (
           <Pill
             key={key}
             label={label}
             active={activeMode === key}
-            colors={MODE_COLORS[key]}
+            colors={MODE_COLORS[key] ?? INACTIVE}
             onClick={() => onModeChange(key)}
           />
         ))}
       </div>
 
-      {activeMode === 'tone' && (
-        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+      <div className={`tone-pills${MODES[activeMode]?.supportsTone ? ' visible' : ''}`}>
+        <div style={styles.divider}>
+          <span style={styles.dividerLine} />
+          <span style={styles.dividerLabel}>Tone</span>
+          <span style={styles.dividerLine} />
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
           {TONE_OPTIONS.map((t) => (
             <Pill
               key={t}
@@ -68,7 +74,40 @@ export default function ModePills({ activeMode, onModeChange, activeTone, onTone
             />
           ))}
         </div>
-      )}
+      </div>
     </div>
   )
+}
+
+const styles = {
+  rowLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: '#aaa',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  divider: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 8,
+    marginTop: 4,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    background: '#e8e8e8',
+    display: 'block',
+  },
+  dividerLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: '#aaa',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    flexShrink: 0,
+  },
 }

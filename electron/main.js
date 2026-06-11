@@ -9,6 +9,8 @@ if (process.platform === 'darwin') app.dock.hide()
 let mainWindow = null
 let tray = null
 
+const WINDOW_WIDTH = 520
+
 // ── Settings persistence ────────────────────────────────────────────────────
 
 function configPath() {
@@ -33,27 +35,34 @@ function usagePath() {
   return path.join(app.getPath('userData'), 'usage.json')
 }
 
-function loadUsage() {
+async function loadUsage() {
   try {
-    return JSON.parse(fs.readFileSync(usagePath(), 'utf8'))
+    const raw = await fs.promises.readFile(usagePath(), 'utf8')
+    return JSON.parse(raw)
   } catch {
     return {}
   }
 }
 
-function recordUsage(mode) {
-  const today = new Date().toISOString().slice(0, 10)
-  const data = loadUsage()
+function localDateString(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+const ALLOWED_MODES = new Set(['grammar', 'refinement', 'tone', 'concise'])
+
+async function recordUsage(mode) {
+  const today = localDateString()
+  const data = await loadUsage()
   if (!data[today]) data[today] = {}
   data[today][mode] = (data[today][mode] || 0) + 1
-  fs.writeFileSync(usagePath(), JSON.stringify(data, null, 2))
+  await fs.promises.writeFile(usagePath(), JSON.stringify(data, null, 2))
 }
 
 let currentShortcut = 'CommandOrControl+Alt+G'
 
 // ── Window helpers ──────────────────────────────────────────────────────────
 
-function getWindowPosition(windowWidth = 520) {
+function getWindowPosition(windowWidth = WINDOW_WIDTH) {
   const { x, y, width, height } = tray.getBounds()
   const { workArea } = screen.getDisplayNearestPoint({ x, y })
   const xPos = Math.round(x - windowWidth / 2 + width / 2)
@@ -63,12 +72,13 @@ function getWindowPosition(windowWidth = 520) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 520,
+    width: WINDOW_WIDTH,
     height: 494,
     x: 0,
     y: 0,
     frame: false,
     transparent: true,
+    hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
     show: false,
@@ -92,11 +102,11 @@ function createWindow() {
 const MAX_INPUT_LENGTH = 5000
 
 function triggerGus() {
+  if (!mainWindow?.webContents) return
   const text = clipboard.readText().trim()
   if (!text) return
   const truncated = text.length > MAX_INPUT_LENGTH
   const clipped = truncated ? text.slice(0, MAX_INPUT_LENGTH) : text
-  console.log('[gus] clipboard:', clipped.slice(0, 120))
   const payload = { text: clipped, truncated }
   const { x, y } = getWindowPosition()
   mainWindow.setPosition(x, y)
@@ -105,6 +115,7 @@ function triggerGus() {
 }
 
 function triggerSettings() {
+  if (!mainWindow?.webContents) return
   const { x, y } = getWindowPosition()
   mainWindow.setPosition(x, y)
   mainWindow.show()
@@ -137,20 +148,29 @@ app.whenReady().then(() => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model: 'llama3.1:8b', prompt: 'hi', stream: false, num_predict: 1 }),
+    signal: AbortSignal.timeout(5000),
   }).catch(() => {})
 })
 
 // ── IPC handlers ────────────────────────────────────────────────────────────
 
 ipcMain.on('close-window', () => { if (mainWindow) mainWindow.hide() })
-ipcMain.on('write-clipboard', (_e, text) => { clipboard.writeText(text) })
+ipcMain.on('write-clipboard', (_e, text) => {
+  if (typeof text !== 'string') return
+  clipboard.writeText(text.slice(0, MAX_INPUT_LENGTH * 2))
+})
 
 ipcMain.handle('load-settings', () => loadSettings())
 
-ipcMain.on('record-usage', (_, mode) => recordUsage(mode))
+ipcMain.on('record-usage', (_, mode) => {
+  if (ALLOWED_MODES.has(mode)) recordUsage(mode).catch(() => {})
+})
 ipcMain.handle('load-usage', () => loadUsage())
 
 ipcMain.handle('save-shortcut', (_, newShortcut) => {
+  if (typeof newShortcut !== 'string' || !newShortcut.trim()) {
+    return { ok: false, error: 'Shortcut must be a non-empty string.' }
+  }
   const ok = globalShortcut.register(newShortcut, triggerGus)
   if (ok) {
     globalShortcut.unregister(currentShortcut)

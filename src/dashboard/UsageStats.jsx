@@ -25,15 +25,19 @@ const CARDS = [
   },
 ]
 
+function toLocalDateString(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function computeStats(usage) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = toLocalDateString()
 
   const checksToday = Object.values(usage[today] ?? {}).reduce((s, n) => s + n, 0)
 
   const weekKeys = Array.from({ length: 7 }, (_, i) => {
     const d = new Date()
     d.setDate(d.getDate() - i)
-    return d.toISOString().slice(0, 10)
+    return toLocalDateString(d)
   })
   const checksThisWeek = weekKeys.reduce((s, k) => {
     return s + Object.values(usage[k] ?? {}).reduce((ss, n) => ss + n, 0)
@@ -52,17 +56,39 @@ function computeStats(usage) {
 
 export default function UsageStats() {
   const [stats, setStats] = useState(null)
+  const [loadError, setLoadError] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    window.electronAPI.invoke('load-usage').then(data => {
-      setStats(computeStats(data ?? {}))
-    })
+    setLoading(true)
+    window.electronAPI.invoke('load-usage')
+      .then(data => setStats(computeStats(data ?? {})))
+      .catch(() => setLoadError(true))
+      .finally(() => setLoading(false))
   }, [])
 
   const values = {
     today: stats?.checksToday ?? '—',
     week: stats?.checksThisWeek ?? '—',
     mode: stats?.topMode ? (MODE_LABELS[stats.topMode] ?? stats.topMode) : '—',
+  }
+
+  if (loading) {
+    return (
+      <div>
+        <p style={styles.sectionLabel}>Usage</p>
+        <p style={styles.loadingText}>Loading…</p>
+      </div>
+    )
+  }
+
+  if (loadError) {
+    return (
+      <div>
+        <p style={styles.sectionLabel}>Usage</p>
+        <p style={styles.errorText}>Could not load usage data.</p>
+      </div>
+    )
   }
 
   return (
@@ -94,6 +120,16 @@ export default function UsageStats() {
 }
 
 const styles = {
+  loadingText: {
+    fontSize: 12,
+    color: '#aaa',
+    marginTop: 4,
+  },
+  errorText: {
+    fontSize: 12,
+    color: '#b91c1c',
+    marginTop: 4,
+  },
   sectionLabel: {
     fontSize: 11,
     fontWeight: 500,

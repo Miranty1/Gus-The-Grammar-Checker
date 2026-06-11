@@ -6,14 +6,14 @@ import Dashboard from './Dashboard'
 import { useOllama } from './hooks/useOllama'
 import { computeDiff, groupOps, buildResult } from './utils/diff'
 
-function prefersReducedMotion() {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
+const EXIT_MS = 100
+const _prefersReducedMotionMQL = window.matchMedia('(prefers-reduced-motion: reduce)')
+function prefersReducedMotion() { return _prefersReducedMotionMQL.matches }
 
 export default function App() {
   const [inputText, setInputText] = useState('')
   const [mode, setMode] = useState('grammar')
-  const [tone, setTone] = useState('formal')
+  const [tone, setTone] = useState('professional')
   const [status, setStatus] = useState('idle')
   const [groupedOps, setGroupedOps] = useState([])
   const [rejectedHunks, setRejectedHunks] = useState(new Set())
@@ -25,10 +25,11 @@ export default function App() {
   const [streamingText, setStreamingText] = useState('')
 
   const modeRef = useRef('grammar')
-  const toneRef = useRef('formal')
+  const toneRef = useRef('professional')
   const inputRef = useRef('')
   const handleAcceptRef = useRef(null)
   const abortRef = useRef(null)
+  const runGenerateRef = useRef(null)
 
   const { generate, error } = useOllama()
 
@@ -82,7 +83,7 @@ export default function App() {
       setAppeared(false)
       setShowSettings(false)
       requestAnimationFrame(() => requestAnimationFrame(() => setAppeared(true)))
-      await runGenerate(text, modeRef.current, toneRef.current)
+      await runGenerateRef.current(text, modeRef.current, toneRef.current)
     })
     window.electronAPI.on('open-settings', () => {
       setShowSettings(true)
@@ -126,7 +127,7 @@ export default function App() {
       return
     }
     setExiting(true)
-    setTimeout(() => window.electronAPI.send('close-window'), 110)
+    setTimeout(() => window.electronAPI.send('close-window'), EXIT_MS + 10)
   }
 
   // Keyboard Enter: immediate close, no animation
@@ -139,6 +140,7 @@ export default function App() {
   }
 
   handleAcceptRef.current = handleAcceptImmediate
+  runGenerateRef.current = runGenerate
 
   useEffect(() => {
     function onKey(e) {
@@ -155,28 +157,11 @@ export default function App() {
       return
     }
     setExiting(true)
-    setTimeout(() => window.electronAPI.send('close-window'), 110)
+    setTimeout(() => window.electronAPI.send('close-window'), EXIT_MS + 10)
   }
 
   return (
     <>
-      <style>{`
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { overflow: hidden; background: transparent; }
-        button:active { transform: scale(0.97) !important; }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.3; transform: scale(0.8); }
-          50%       { opacity: 1;   transform: scale(1); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          @keyframes pulse { 0%, 100% { opacity: 0.6; } }
-        }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
-      `}</style>
-
       <div style={{
         position: 'relative',
         width: '100vw',

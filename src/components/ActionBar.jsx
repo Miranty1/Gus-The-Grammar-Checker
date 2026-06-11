@@ -1,19 +1,20 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { btnBase } from '../styles/base'
 
 export default function ActionBar({ onAccept, onDismiss, disabled }) {
+  const [dismissHovered, setDismissHovered] = useState(false)
   return (
     <div style={styles.bar}>
       <button
         onClick={onDismiss}
-        style={styles.dismiss}
-        onMouseEnter={e => e.currentTarget.style.background = '#f5f5f5'}
-        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        style={{ ...styles.dismiss, background: dismissHovered ? '#f5f5f5' : 'transparent' }}
+        onMouseEnter={() => setDismissHovered(true)}
+        onMouseLeave={() => setDismissHovered(false)}
       >
         Dismiss
       </button>
       <button
-        onClick={onAccept}
+        onClick={disabled ? undefined : onAccept}
         disabled={disabled}
         style={{ ...styles.accept, ...(disabled ? styles.acceptDisabled : {}) }}
       >
