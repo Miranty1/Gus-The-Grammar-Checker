@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MODES } from '../prompts'
+import { MODES, TONE_DESCRIPTIONS } from '../prompts'
 
 const OLLAMA_URL = 'http://localhost:11434/api/generate'
 const MODEL = 'llama3.1:8b'
@@ -19,14 +19,19 @@ export function useOllama() {
   async function generate(text, mode, tone = 'professional', signal, onChunk) {
     setError(null)
 
-    const systemPrompt = MODES[mode].prompt.replace('{{tone}}', tone)
-    // Short timeout for the initial connection only — stream reads use the user abort signal
+    const systemPrompt = MODES[mode].prompt.replace('{{tone}}', TONE_DESCRIPTIONS[tone] ?? tone)
+    // Timeout for the initial connection only — stream reads use the user abort
+    // signal. Generous enough to cover a cold model load (Ollama holds the
+    // response until the model is in memory); a down Ollama still fails instantly
+    // with a connection error.
     const connectSignal = signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-      : AbortSignal.timeout(10_000)
+      ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+      : AbortSignal.timeout(30_000)
 
+    // Bound generation against runaway output, but keep the ceiling high enough
+    // that max-length inputs (~900 words) are never truncated mid-correction.
     const inputWords = text.trim().split(/\s+/).filter(Boolean).length
-    const num_predict = Math.min(inputWords * 3, 600)
+    const num_predict = Math.min(inputWords * 3, 2048)
 
     try {
       let res
@@ -37,9 +42,18 @@ export function useOllama() {
           body: JSON.stringify({
             model: MODEL,
             system: systemPrompt,
-            prompt: text,
+            // Delimiters mark the clipboard content as data, not instructions
+            prompt: `Text to edit:\n"""\n${text}\n"""`,
             stream: true,
-            num_predict,
+            // Keep the model loaded between checks; Ollama's 5-minute default
+            // unload makes every later check pay the multi-second reload cost
+            keep_alive: '30m',
+            options: {
+              ...MODES[mode].options,
+              // Max input (~1,300 tokens) + system prompt + 2,048 output tokens
+              num_ctx: 8192,
+              num_predict,
+            },
           }),
           signal: connectSignal,
         })
@@ -59,46 +73,56 @@ export function useOllama() {
       // Reuse the same TextDecoder instance across all chunks so { stream: true }
       // correctly handles multi-byte characters (em dashes, smart quotes) at chunk boundaries.
       const reader = res.body.getReader()
+      // Cancelling the reader resolves any pending read() with done:true and
+      // tears down the connection, so Ollama stops generating immediately
+      // instead of waiting for the next chunk to notice the abort.
+      const cancelReader = () => { reader.cancel().catch(() => {}) }
+      signal?.addEventListener('abort', cancelReader, { once: true })
       const decoder = new TextDecoder()
       let accumulated = ''
       let lineBuffer = ''
       let preambleStripped = false
 
-      while (true) {
+      try {
+        while (true) {
+          if (signal?.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
+          const { done, value } = await reader.read()
+          if (done) break
+          lineBuffer += decoder.decode(value, { stream: true })
+          const lines = lineBuffer.split('\n')
+          lineBuffer = lines.pop()
+          for (const line of lines) {
+            if (!line.trim()) continue
+            try {
+              const json = JSON.parse(line)
+              if (json.response) {
+                accumulated += json.response
+                // Short-circuit: only apply regex until preamble has been stripped once
+                let display = accumulated
+                if (!preambleStripped) {
+                  display = stripPreamble(accumulated)
+                  if (display !== accumulated) preambleStripped = true
+                }
+                onChunk?.(display)
+              }
+            } catch { /* skip malformed line */ }
+          }
+        }
         if (signal?.aborted) throw Object.assign(new Error(), { name: 'AbortError' })
-        const { done, value } = await reader.read()
-        if (done) break
-        lineBuffer += decoder.decode(value, { stream: true })
-        const lines = lineBuffer.split('\n')
-        lineBuffer = lines.pop()
-        for (const line of lines) {
-          if (!line.trim()) continue
+        // Flush any remaining buffered line (e.g. Ollama's final {"done":true} close marker)
+        if (lineBuffer.trim()) {
           try {
-            const json = JSON.parse(line)
+            const json = JSON.parse(lineBuffer)
             if (json.response) {
               accumulated += json.response
-              // Short-circuit: only apply regex until preamble has been stripped once
-              let display = accumulated
-              if (!preambleStripped) {
-                display = stripPreamble(accumulated)
-                if (display !== accumulated) preambleStripped = true
-              }
-              onChunk?.(display)
+              onChunk?.(preambleStripped ? accumulated : stripPreamble(accumulated))
             }
-          } catch { /* skip malformed line */ }
+          } catch { /* ignore */ }
         }
+        return stripPreamble(accumulated)
+      } finally {
+        signal?.removeEventListener('abort', cancelReader)
       }
-      // Flush any remaining buffered line (e.g. Ollama's final {"done":true} close marker)
-      if (lineBuffer.trim()) {
-        try {
-          const json = JSON.parse(lineBuffer)
-          if (json.response) {
-            accumulated += json.response
-            onChunk?.(preambleStripped ? accumulated : stripPreamble(accumulated))
-          }
-        } catch { /* ignore */ }
-      }
-      return stripPreamble(accumulated)
     } catch (err) {
       if (err.name === 'AbortError') throw err
       setError(err.message)

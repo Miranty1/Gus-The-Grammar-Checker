@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react'
-import ModePills from './components/ModePills'
+import SegmentedControl from './components/SegmentedControl'
+import ToneRow from './components/ToneRow'
 import DiffView from './components/DiffView'
-import ActionBar from './components/ActionBar'
+import Footer from './components/Footer'
 import Dashboard from './Dashboard'
 import { useOllama } from './hooks/useOllama'
 import { computeDiff, groupOps, buildResult } from './utils/diff'
+import { MODES } from './prompts'
 
-const EXIT_MS = 100
+const EXIT_MS = 120
 const _prefersReducedMotionMQL = window.matchMedia('(prefers-reduced-motion: reduce)')
 function prefersReducedMotion() { return _prefersReducedMotionMQL.matches }
 
@@ -28,8 +30,10 @@ export default function App() {
   const toneRef = useRef('professional')
   const inputRef = useRef('')
   const handleAcceptRef = useRef(null)
+  const handleDismissRef = useRef(null)
   const abortRef = useRef(null)
   const runGenerateRef = useRef(null)
+  const showSettingsRef = useRef(false)
 
   const { generate, error } = useOllama()
 
@@ -54,11 +58,22 @@ export default function App() {
     setRejectedHunks(new Set())
     setStreamingText('')
 
+    // Ollama can emit several chunks between frames; buffer the latest partial
+    // and flush once per frame so renders are capped at display refresh rate.
+    let pendingPartial = ''
+    let rafId = null
+    const flush = () => {
+      rafId = null
+      if (!controller.signal.aborted) setStreamingText(pendingPartial)
+    }
+
     try {
       const out = await generate(text, currentMode, currentTone, controller.signal, (partial) => {
         if (controller.signal.aborted) return
-        setStreamingText(partial)
+        pendingPartial = partial
+        if (rafId === null) rafId = requestAnimationFrame(flush)
       })
+      if (rafId !== null) cancelAnimationFrame(rafId)
       if (controller.signal.aborted) return
       setStreamingText('')
       if (out) {
@@ -68,6 +83,7 @@ export default function App() {
         setStatus('error')
       }
     } catch (err) {
+      if (rafId !== null) cancelAnimationFrame(rafId)
       if (err.name === 'AbortError') return
       setStatus('error')
     }
@@ -139,19 +155,9 @@ export default function App() {
     window.electronAPI.send('close-window')
   }
 
-  handleAcceptRef.current = handleAcceptImmediate
-  runGenerateRef.current = runGenerate
-
-  useEffect(() => {
-    function onKey(e) {
-      if (e.key === 'Enter' && !e.repeat) handleAcceptRef.current?.()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [])
-
   // Mouse-triggered dismiss: plays exit animation
   function handleDismiss() {
+    abortRef.current?.abort()
     if (prefersReducedMotion()) {
       window.electronAPI.send('close-window')
       return
@@ -160,88 +166,100 @@ export default function App() {
     setTimeout(() => window.electronAPI.send('close-window'), EXIT_MS + 10)
   }
 
+  handleAcceptRef.current = handleAcceptImmediate
+  handleDismissRef.current = handleDismiss
+  runGenerateRef.current = runGenerate
+  showSettingsRef.current = showSettings
+
+  useEffect(() => {
+    function onKey(e) {
+      if (showSettingsRef.current) {
+        // Settings overlay owns the keyboard; Escape backs out of it
+        // (shortcut recording stops propagation, so it isn't affected here)
+        if (e.key === 'Escape') setShowSettings(false)
+        return
+      }
+      if (e.key === 'Enter' && !e.repeat) handleAcceptRef.current?.()
+      if (e.key === 'Escape') handleDismissRef.current?.()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
+
+  const mounted = appeared && !exiting
+
   return (
-    <>
-      <div style={{
-        position: 'relative',
-        width: '100vw',
-        height: '100vh',
-        opacity: exiting ? 0 : appeared ? 1 : 0,
-        transform: exiting
-          ? 'scale(0.97)'
-          : (appeared || prefersReducedMotion()) ? 'scale(1) translateY(0px)' : 'scale(0.96) translateY(-5px)',
-        transition: exiting
-          ? 'opacity 100ms cubic-bezier(0.23,1,0.32,1), transform 100ms cubic-bezier(0.23,1,0.32,1)'
-          : appeared
-          ? 'opacity 180ms cubic-bezier(0.23,1,0.32,1), transform 180ms cubic-bezier(0.23,1,0.32,1)'
-          : 'none',
-        filter: 'drop-shadow(0 6px 20px rgba(0,0,0,0.13))',
-      }}>
-        {/* CSS nib triangle */}
-        <div style={styles.nib} />
+    <div className={`gus-root${mounted ? ' mounted' : ''}`}>
+      <div className="gus-nib" />
 
-        {/* Frosted glass panel */}
-        <div style={styles.panel}>
-          {/* Header */}
-          <div style={styles.header}>
-            <div style={styles.headerLeft}>
-              <div style={styles.logoMark}>G</div>
-              <div>
-                <div style={styles.appName}>Gus</div>
-                <div style={styles.appSub}>The grammar checker</div>
-              </div>
-            </div>
-            {shortcut && <div style={styles.shortcutPill}>{acceleratorToSymbols(shortcut)}</div>}
-          </div>
-
-          {/* Mode pills */}
-          <div style={styles.pillsWrap}>
-            <ModePills
-              activeMode={mode}
-              onModeChange={handleModeChange}
-              activeTone={tone}
-              onToneChange={handleToneChange}
-            />
-          </div>
-
-          {/* Truncation notice */}
-          {truncated && (
-            <div style={styles.truncatedNotice}>
-              Text clipped to 5,000 characters
-            </div>
-          )}
-
-          {/* Diff content */}
-          <div style={styles.content}>
-            <DiffView
-              status={status}
-              original={inputText}
-              groupedOps={groupedOps}
-              rejectedHunks={rejectedHunks}
-              onToggleHunk={handleToggleHunk}
-              onDismiss={handleDismiss}
-              error={error}
-              shortcut={shortcut ? acceleratorToSymbols(shortcut) : ''}
-              streamingText={streamingText}
-            />
-          </div>
-
-          <ActionBar
-            onAccept={handleAccept}
-            onDismiss={handleDismiss}
-            disabled={status !== 'result'}
-          />
-
-          {/* Settings / dashboard overlay */}
-          {showSettings && (
-            <Dashboard
-              onClose={() => setShowSettings(false)}
-              onShortcutSaved={setShortcut}
-            />
-          )}
+      <div className="gus-panel">
+        <div className="header">
+          <SegmentedControl activeMode={mode} onModeChange={handleModeChange} />
+          {shortcut && <div className="shortcut-chip">{acceleratorToSymbols(shortcut)}</div>}
+          <button
+            className="icon-btn"
+            title="Settings"
+            aria-label="Settings"
+            onClick={() => setShowSettings(true)}
+          >
+            <GearIcon />
+          </button>
         </div>
+
+        <ToneRow
+          visible={!!MODES[mode]?.supportsTone}
+          activeTone={tone}
+          onToneChange={handleToneChange}
+        />
+
+        {truncated && (
+          <div className="notice-truncated">
+            Text clipped to 5,000 characters
+          </div>
+        )}
+
+        <div className="content">
+          <DiffView
+            status={status}
+            original={inputText}
+            groupedOps={groupedOps}
+            rejectedHunks={rejectedHunks}
+            onToggleHunk={handleToggleHunk}
+            onDismiss={handleDismiss}
+            error={error}
+            shortcut={shortcut ? acceleratorToSymbols(shortcut) : ''}
+            streamingText={streamingText}
+          />
+        </div>
+
+        <Footer
+          onAccept={handleAccept}
+          onDismiss={handleDismiss}
+          disabled={status !== 'result'}
+          status={status}
+        />
+
+        {showSettings && (
+          <Dashboard
+            onClose={() => setShowSettings(false)}
+            onShortcutSaved={setShortcut}
+          />
+        )}
       </div>
-    </>
+    </div>
+  )
+}
+
+function GearIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M6.6 1.6a.7.7 0 0 1 .69-.6h1.42a.7.7 0 0 1 .69.6l.17 1.18c.04.27.23.49.47.61.25.12.53.13.77 0l1.1-.47a.7.7 0 0 1 .87.3l.71 1.23a.7.7 0 0 1-.18.9l-.93.72c-.21.17-.31.43-.31.7 0 .27.1.53.31.7l.93.72a.7.7 0 0 1 .18.9l-.71 1.23a.7.7 0 0 1-.87.3l-1.1-.47a.86.86 0 0 0-.77 0c-.24.12-.43.34-.47.61l-.17 1.18a.7.7 0 0 1-.69.6H7.29a.7.7 0 0 1-.69-.6l-.17-1.18a.85.85 0 0 0-.47-.61.86.86 0 0 0-.77 0l-1.1.47a.7.7 0 0 1-.87-.3l-.71-1.23a.7.7 0 0 1 .18-.9l.93-.72c.21-.17.31-.43.31-.7 0-.27-.1-.53-.31-.7l-.93-.72a.7.7 0 0 1-.18-.9l.71-1.23a.7.7 0 0 1 .87-.3l1.1.47c.24.13.52.12.77 0 .24-.12.43-.34.47-.61L6.6 1.6Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+      />
+      <circle cx="8" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.3" />
+    </svg>
   )
 }
 
@@ -253,96 +271,3 @@ const ACCELERATOR_SYMBOLS = {
 function acceleratorToSymbols(accelerator) {
   return accelerator.split('+').map(p => ACCELERATOR_SYMBOLS[p] ?? p.toUpperCase()).join(' ')
 }
-
-const styles = {
-  nib: {
-    position: 'absolute',
-    top: 0,
-    left: 'calc(50% - 11px)',
-    width: 0,
-    height: 0,
-    borderLeft: '11px solid transparent',
-    borderRight: '11px solid transparent',
-    borderBottom: '12px solid #fff',
-    zIndex: 2,
-  },
-  panel: {
-    position: 'absolute',
-    top: 12,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 14,
-    background: '#fff',
-    display: 'flex',
-    flexDirection: 'column',
-    padding: '18px 20px 16px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    overflow: 'hidden',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 14,
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-  },
-  logoMark: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    background: '#E6F1FB',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 15,
-    fontWeight: 700,
-    color: '#0C447C',
-    flexShrink: 0,
-  },
-  appName: {
-    fontSize: 15,
-    fontWeight: 600,
-    color: '#111',
-    lineHeight: 1.2,
-  },
-  appSub: {
-    fontSize: 11,
-    color: '#888',
-    lineHeight: 1.2,
-  },
-  shortcutPill: {
-    fontSize: 11,
-    color: '#777',
-    background: '#f5f5f5',
-    border: '1px solid #e8e8e8',
-    borderRadius: 20,
-    padding: '3px 9px',
-    fontFamily: '-apple-system, sans-serif',
-  },
-  pillsWrap: {
-    marginBottom: 14,
-  },
-  truncatedNotice: {
-    fontSize: 11,
-    color: '#a0522d',
-    background: '#fff8f0',
-    border: '1px solid #f5d9b8',
-    borderRadius: 6,
-    padding: '4px 10px',
-    marginBottom: 8,
-  },
-  content: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    minHeight: 0,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-}
-

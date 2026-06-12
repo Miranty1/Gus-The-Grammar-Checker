@@ -4,6 +4,11 @@ const fs = require('node:fs')
 
 const isDev = process.env.NODE_ENV === 'development'
 
+// macOS trackpad rubber-banding is compositor-level in Chromium; CSS
+// overscroll-behavior alone doesn't reliably disable it in Electron.
+// Must be set before app is ready.
+app.commandLine.appendSwitch('disable-features', 'ElasticOverscroll')
+
 if (process.platform === 'darwin') app.dock.hide()
 
 let mainWindow = null
@@ -50,9 +55,18 @@ function localDateString(d = new Date()) {
 
 const ALLOWED_MODES = new Set(['grammar', 'refinement', 'tone', 'concise'])
 
+const USAGE_RETENTION_DAYS = 90
+
 async function recordUsage(mode) {
   const today = localDateString()
   const data = await loadUsage()
+  // Keep the file bounded: drop days past the retention window
+  const cutoff = new Date()
+  cutoff.setDate(cutoff.getDate() - USAGE_RETENTION_DAYS)
+  const cutoffKey = localDateString(cutoff)
+  for (const day of Object.keys(data)) {
+    if (day < cutoffKey) delete data[day]
+  }
   if (!data[today]) data[today] = {}
   data[today][mode] = (data[today][mode] || 0) + 1
   await fs.promises.writeFile(usagePath(), JSON.stringify(data, null, 2))
@@ -142,13 +156,26 @@ app.whenReady().then(() => {
   tray.on('click', triggerGus)
 
   createWindow()
-  globalShortcut.register(currentShortcut, triggerGus)
+  // Register only once the renderer can receive clipboard-text; registering
+  // earlier lets a shortcut press during load send into a not-yet-listening page.
+  mainWindow.webContents.once('did-finish-load', () => {
+    globalShortcut.register(currentShortcut, triggerGus)
+  })
 
+  // Warm-up must use the same num_ctx/keep_alive as the renderer's requests
+  // (src/hooks/useOllama.js): Ollama reloads the model whenever the context
+  // size changes, so a mismatched warm-up would force a second load on first use.
   fetch('http://localhost:11434/api/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'llama3.1:8b', prompt: 'hi', stream: false, num_predict: 1 }),
-    signal: AbortSignal.timeout(5000),
+    body: JSON.stringify({
+      model: 'llama3.1:8b',
+      prompt: 'hi',
+      stream: false,
+      keep_alive: '30m',
+      options: { num_predict: 1, num_ctx: 8192 },
+    }),
+    signal: AbortSignal.timeout(120_000),
   }).catch(() => {})
 })
 

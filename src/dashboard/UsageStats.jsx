@@ -7,22 +7,10 @@ const MODE_LABELS = {
   concise: 'Concise',
 }
 
-const CARDS = [
-  {
-    id: 'today',
-    label: 'Today',
-    bg: '#E6F1FB', text: '#0C447C', border: '#B5D4F4',
-  },
-  {
-    id: 'week',
-    label: 'This week',
-    bg: '#EEEDFE', text: '#3C3489', border: '#CECBF6',
-  },
-  {
-    id: 'mode',
-    label: 'Most used mode',
-    bg: '#E1F5EE', text: '#085041', border: '#9FE1CB',
-  },
+const TILES = [
+  { id: 'today', label: 'Today' },
+  { id: 'week', label: 'This week' },
+  { id: 'mode', label: 'Most used mode' },
 ]
 
 function toLocalDateString(d = new Date()) {
@@ -76,8 +64,8 @@ export default function UsageStats() {
   if (loading) {
     return (
       <div>
-        <p style={styles.sectionLabel}>Usage</p>
-        <p style={styles.loadingText}>Loading…</p>
+        <p className="section-label">Usage</p>
+        <p className="hint">Loading…</p>
       </div>
     )
   }
@@ -85,79 +73,25 @@ export default function UsageStats() {
   if (loadError) {
     return (
       <div>
-        <p style={styles.sectionLabel}>Usage</p>
-        <p style={styles.errorText}>Could not load usage data.</p>
+        <p className="section-label">Usage</p>
+        <p className="error-text">Could not load usage data.</p>
       </div>
     )
   }
 
   return (
     <div>
-      <p style={styles.sectionLabel}>Usage</p>
-      <div style={styles.grid}>
-        {CARDS.map(card => (
-          <div
-            key={card.id}
-            style={{
-              ...styles.card,
-              background: card.bg,
-              border: `1px solid ${card.border}`,
-              color: card.text,
-            }}
-          >
-            <span style={styles.cardLabel}>{card.label}</span>
-            <span style={{
-              ...styles.cardValue,
-              fontSize: card.id === 'mode' ? 18 : 32,
-            }}>
-              {values[card.id]}
+      <p className="section-label">Usage</p>
+      <div className="stat-grid">
+        {TILES.map(tile => (
+          <div key={tile.id} className="stat-tile">
+            <span className="stat-label">{tile.label}</span>
+            <span className={`stat-value${tile.id === 'mode' ? ' small' : ''}`}>
+              {values[tile.id]}
             </span>
           </div>
         ))}
       </div>
     </div>
   )
-}
-
-const styles = {
-  loadingText: {
-    fontSize: 12,
-    color: '#aaa',
-    marginTop: 4,
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#b91c1c',
-    marginTop: 4,
-  },
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: 500,
-    color: '#888',
-    letterSpacing: '0.04em',
-    marginBottom: 10,
-  },
-  grid: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  card: {
-    borderRadius: 12,
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  },
-  cardLabel: {
-    fontSize: 10,
-    fontWeight: 600,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
-    opacity: 0.7,
-  },
-  cardValue: {
-    fontWeight: 700,
-    lineHeight: 1.1,
-  },
 }

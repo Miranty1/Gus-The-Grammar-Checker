@@ -1,54 +1,81 @@
-import React, { useState } from 'react'
+import React, { useLayoutEffect, useRef } from 'react'
+
+// Words render as index-keyed spans so existing ones never remount: the
+// word-in animation plays only on newly appended words as the stream grows.
+function StreamingText({ text }) {
+  const scrollRef = useRef(null)
+  const words = text.match(/\S+\s*/g) ?? []
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    // Follow the stream, but don't fight a user who scrolled up to re-read.
+    // 60px covers the height a single flush can add before the threshold breaks.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    if (nearBottom) el.scrollTop = el.scrollHeight
+  }, [text])
+
+  return (
+    <div ref={scrollRef} className="dv-suggested">
+      {words.map((w, i) => (
+        <span key={i} className="stream-word">{w}</span>
+      ))}
+    </div>
+  )
+}
 
 export default function DiffView({ status, original, groupedOps, rejectedHunks, onToggleHunk, onDismiss, error, shortcut = '⌘ ⌥ G', streamingText = '' }) {
   if (status === 'idle') {
     return (
-      <div style={styles.centered}>
-        <p style={styles.muted}>Copy some text, then press <kbd style={styles.kbd}>{shortcut}</kbd></p>
+      <div className="dv-centered">
+        <p className="dv-hint">Copy some text, then press <kbd className="kbd">{shortcut}</kbd></p>
       </div>
     )
   }
 
   if (status === 'error') {
     return (
-      <div style={styles.centered}>
-        <div style={styles.errorCard}>
-          <p style={styles.errorHeading}>Gus needs Ollama running</p>
+      <div className="dv-centered">
+        <div className="dv-error-card">
+          <p className="dv-error-title">
+            <span className="status-dot offline" />
+            Gus needs Ollama running
+          </p>
           {error
-            ? <p style={styles.errorBody}>{error}</p>
-            : <p style={styles.errorBody}>Open Terminal and run:</p>
+            ? <p className="dv-error-body">{error}</p>
+            : <p className="dv-error-body">Open Terminal and run:</p>
           }
-          {!error && <code style={styles.codeBlock}>ollama serve</code>}
-          <DismissButton onClick={onDismiss} />
+          {!error && <code className="dv-code">ollama serve</code>}
+          <button className="btn btn-ghost" style={{ alignSelf: 'flex-end', marginTop: 4 }} onClick={onDismiss}>
+            Dismiss
+          </button>
         </div>
       </div>
     )
   }
 
   return (
-    <div style={styles.splitWrap}>
-      <div style={styles.section}>
-        <div style={styles.sectionLabel}>original</div>
-        <div style={styles.originalText}>{original}</div>
+    <div className="dv-split">
+      <div>
+        <div className="dv-label">Original</div>
+        <div className="dv-original">{original}</div>
       </div>
 
-      <div style={styles.divider} />
+      <div className="dv-divider" />
 
-      <div style={{ ...styles.section, flex: 1, minHeight: 0 }}>
-        <div style={styles.sectionLabel}>suggested</div>
+      <div className="dv-suggested-wrap">
+        <div className="dv-label">Suggested</div>
 
         {status === 'loading' && streamingText ? (
-          <div style={styles.suggestedText}>{streamingText}</div>
+          <StreamingText text={streamingText} />
         ) : status === 'loading' ? (
-          <div style={styles.dotsWrap}>
-            <div style={styles.loadingDots}>
-              <span style={{ ...styles.dot, animationDelay: '0ms' }} />
-              <span style={{ ...styles.dot, animationDelay: '160ms' }} />
-              <span style={{ ...styles.dot, animationDelay: '320ms' }} />
-            </div>
+          <div className="skeleton">
+            <div className="skeleton-line" />
+            <div className="skeleton-line" />
+            <div className="skeleton-line" />
           </div>
         ) : (
-          <div style={styles.suggestedText}>
+          <div className="diff-result dv-suggested">
             {(groupedOps ?? []).map((item, idx) => {
               if (item.type === 'equal') {
                 return <span key={`eq-${idx}`}>{item.text}</span>
@@ -57,26 +84,14 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
               const rejected = rejectedHunks.has(item.id)
 
               if (rejected) {
-                if (item.removes.length === 0) {
-                  return (
-                    <span
-                      key={item.id}
-                      onClick={() => onToggleHunk(item.id)}
-                      title="Click to re-add"
-                      style={styles.rejectedChip}
-                    >
-                      {item.adds.join('')}
-                    </span>
-                  )
-                }
                 return (
                   <span
                     key={item.id}
                     onClick={() => onToggleHunk(item.id)}
-                    title="Click to re-accept"
-                    style={styles.rejectedChip}
+                    title={item.removes.length === 0 ? 'Click to re-add' : 'Click to re-accept'}
+                    className="chip-rejected"
                   >
-                    {item.removes.join('')}
+                    {item.removes.length === 0 ? item.adds.join('') : item.removes.join('')}
                   </span>
                 )
               }
@@ -87,7 +102,7 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
                     key={item.id}
                     onClick={() => onToggleHunk(item.id)}
                     title="Click to restore"
-                    style={styles.deletionMarker}
+                    className="chip-del"
                   >
                     {item.removes.join('')}
                   </span>
@@ -99,7 +114,7 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
                   key={item.id}
                   onClick={() => onToggleHunk(item.id)}
                   title="Click to reject"
-                  style={styles.addedChip}
+                  className="chip-add"
                 >
                   {item.adds.join('')}
                 </span>
@@ -110,175 +125,4 @@ export default function DiffView({ status, original, groupedOps, rejectedHunks, 
       </div>
     </div>
   )
-}
-
-function DismissButton({ onClick }) {
-  const [hovered, setHovered] = useState(false)
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        ...styles.dismissBtn,
-        background: hovered ? '#f5f5f5' : 'transparent',
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      Dismiss
-    </button>
-  )
-}
-
-const styles = {
-  centered: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: '100%',
-    padding: '0 20px',
-  },
-  muted: {
-    fontSize: 13,
-    color: '#888',
-    margin: 0,
-    textAlign: 'center',
-    lineHeight: 1.5,
-  },
-  kbd: {
-    display: 'inline-block',
-    padding: '1px 6px',
-    background: '#f0f0f0',
-    border: '1px solid #ddd',
-    borderRadius: 5,
-    fontSize: 11,
-    fontFamily: '-apple-system, sans-serif',
-    color: '#555',
-  },
-  errorCard: {
-    background: '#fef2f2',
-    border: '1px solid #fde8e8',
-    borderRadius: 12,
-    padding: '20px 22px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-start',
-    gap: 8,
-    width: '100%',
-    maxWidth: 380,
-  },
-  errorHeading: {
-    margin: 0,
-    fontSize: 15,
-    fontWeight: 500,
-    color: '#111',
-    lineHeight: 1.3,
-  },
-  errorBody: {
-    margin: 0,
-    fontSize: 13,
-    color: '#666',
-    lineHeight: 1.4,
-  },
-  codeBlock: {
-    display: 'block',
-    background: '#f4f4f4',
-    color: '#1a1a1a',
-    fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-    fontSize: 13,
-    padding: '8px 12px',
-    borderRadius: 6,
-    width: '100%',
-  },
-  dismissBtn: {
-    alignSelf: 'flex-end',
-    marginTop: 4,
-    border: 'none',
-    borderRadius: 8,
-    padding: '7px 16px',
-    fontSize: 13,
-    fontWeight: 500,
-    color: '#666',
-    cursor: 'pointer',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    transition: 'background 120ms ease',
-  },
-  loadingDots: {
-    display: 'flex',
-    gap: 6,
-    alignItems: 'center',
-  },
-  dotsWrap: {
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: '50%',
-    background: '#ccc',
-    display: 'inline-block',
-    animation: 'pulse 1s ease-in-out infinite',
-  },
-  splitWrap: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-  },
-  section: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  sectionLabel: {
-    fontSize: 10,
-    fontWeight: 500,
-    color: '#aaa',
-    marginBottom: 5,
-  },
-  originalText: {
-    fontSize: 13,
-    lineHeight: 1.6,
-    color: '#555',
-    maxHeight: 110,
-    overflowY: 'auto',
-    wordBreak: 'break-word',
-  },
-  divider: {
-    height: 1,
-    background: '#f0f0f0',
-    margin: '10px 0',
-    flexShrink: 0,
-  },
-  suggestedText: {
-    fontSize: 14,
-    lineHeight: 1.7,
-    color: '#222',
-    wordBreak: 'break-word',
-    flex: 1,
-    overflowY: 'auto',
-  },
-  addedChip: {
-    background: '#d5f5e3',
-    color: '#1e8449',
-    borderRadius: 3,
-    padding: '0 2px',
-    cursor: 'pointer',
-    border: '1px solid transparent',
-    transition: 'border-color 100ms ease',
-  },
-  rejectedChip: {
-    background: '#f5f5f5',
-    color: '#999',
-    borderRadius: 3,
-    padding: '0 2px',
-    cursor: 'pointer',
-    border: '1px solid #e0e0e0',
-  },
-  deletionMarker: {
-    color: '#c0392b',
-    opacity: 0.45,
-    textDecoration: 'line-through',
-    cursor: 'pointer',
-  },
 }
